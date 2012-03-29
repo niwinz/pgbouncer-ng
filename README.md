@@ -17,7 +17,7 @@ Fetch latest development branch from github and install this:
 
 *NOTE:* gevent-1.0b1+ is required dependence.
 
-## How to configure: ## 
+## How to configure: ##
 
 The configuration is divided into 3 groups: global, local, remote. In global scope you
 can define limits for pooler. In local scope you can define settings for local pool:
