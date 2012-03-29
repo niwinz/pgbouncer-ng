@@ -1,1 +1,4 @@
 *.pyc
+versiontools-*
+build
+pgbouncer_ng.egg-info
