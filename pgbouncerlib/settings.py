@@ -12,12 +12,12 @@ DEFAULT_CONFIG_FILES = [
 
 DEFAULTS = {
     'local': {
-        'host': '/tmp/.s.PGSQL.6666',
+        'host': 'unix:///tmp/.s.PGSQL.6666',
         'port': None,
         'ssl': False 
     },
     'remote': {
-        'host': '/tmp/.s.PGSQL.5432',
+        'host': 'unix:///tmp/.s.PGSQL.5432',
         'port': None,
         'ssl': False,
     },
@@ -39,21 +39,21 @@ class Settings(object):
             poolsize = self.parser.get('global', 'poolsize')
         except ((NoOptionError, NoSectionError), NoSectionError):
             poolsize = DEFAULTS['global']['poolsize']
-        return poolsize
+        return int(poolsize)
 
     def get_global_maxconns(self):
         try:
             maxconns = self.parser.get('global', 'maxconns')
         except (NoOptionError, NoSectionError):
             maxconns = DEFAULTS['global']['maxconns']
-        return maxconns
+        return int(maxconns)
 
     def get_local_port(self):
         try:
             port = self.parser.get('local', 'port')
         except (NoOptionError, NoSectionError):
             port = DEFAULTS['local']['port']
-        return port
+        return port and int(port) or None
 
     def get_local_host(self):
         try:
@@ -69,13 +69,12 @@ class Settings(object):
             sslopt = DEFAULTS['local']['ssl']
         return sslopt
 
-
     def get_remote_port(self):
         try:
             port = self.parser.get('remote', 'port')
         except (NoOptionError, NoSectionError):
             port = DEFAULTS['remote']['port']
-        return port
+        return port and int(port) or None
 
     def get_remote_host(self):
         try:

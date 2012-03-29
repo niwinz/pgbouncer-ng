@@ -6,6 +6,7 @@ monkey.patch_all()
 from collections import defaultdict
 from gevent.server import StreamServer
 from gevent.queue import Queue
+from gevent.pool import Pool
 
 import select
 import socket
@@ -13,112 +14,75 @@ import struct
 import logging as log
 import os
 
-LISTEN_PORT=6666
-POSTGRES_HOST="localhost"
-POSTGRES_PORT=5432
+from . import utils
+from .settings import settings
 
-
-def unlink(path): 
-    from errno import ENOENT 
-    try: 
-        os.unlink(path) 
-    except OSError, ex: 
-        if ex.errno != ENOENT: 
-            raise 
-
-def bind_unix_listener(path, backlog=50, reuse=False):         
+def bind_unix_listener(path, reuse=False, backlog=100):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) 
-    sock.setblocking(1) 
     
     if reuse:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.connect(path)
+
     else:
-        unlink(path)
+        utils.unlink(path)
         sock.bind(path)
         sock.listen(backlog) 
-    
+
     return sock
 
 
 class BouncerServer(StreamServer):
     queues = {}
+    unix_socket_used = False
 
     def __init__(self):
-        #Unix socket +1
-        socket_path = '/tmp/.s.PGSQL.%i'%(LISTEN_PORT)        
-        super(BouncerServer, self).__init__(bind_unix_listener(socket_path))
-        #super(BouncerServer, self).__init__(('0.0.0.0', 6666))
-    
-    def make_ssl_request(self):
-        """
-        Temporal method.
-        """
-        return struct.pack("!ii", 8, 80877103)
+        max_connections = settings.get_global_maxconns()
+        local_connection_pool = Pool(max_connections)
 
-    def make_terminate_bytes(self):
-        """
-        Returns terminate socket packet data.
-        """
+        bind_host, bind_port = settings.get_local_host(), settings.get_local_port()
+        if bind_host.startswith('unix'):
+            sock = bind_unix_listener(bind_host[7:])
+            log.info("Now listening on %s", bind_host)
+            super(BouncerServer, self).__init__(sock)
+            self.unix_socket_used = True
+            return 
+        
+        log.info("Now listening on %s:%s", bind_host, bind_port)
+        super(BouncerServer, self).__init__((bind_host, bind_port))
 
-        return b'X\x00\x00\x00\x04'
 
     def create_dst_connection(self, client_data):
         """
         Creates dst connection. Id client_data key exists in queues pool, 
         return existing socket, otherwise create new socket.
         """
+        
         log.debug("Creating socket for remote connection.")
         if client_data in self.queues and self.queues[client_data]['socket_queue'].qsize() > 0:
             log.debug("Remote connection found on pool, returning this.")
             return True, self.queues[client_data]['socket_queue'].get()
         
         log.debug("Connection not found on pool, creating new.")
-        
-        #Unix sockets +1
-        #sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        #sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        #sock.connect((POSTGRES_HOST, POSTGRES_PORT))
-        socket_path = '/tmp/.s.PGSQL.%i'%(POSTGRES_PORT)        
-        sock = bind_unix_listener(socket_path, reuse=True)
-        
+        bind_host, bind_port = settings.get_remote_host(), settings.get_remote_port()
+
+        if bind_host.startswith('unix'):
+            sock = bind_unix_listener(bind_host[7:], reuse=True)
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.connect((bind_host, bind_port))
+
         return False, sock
 
-    def create_query_data(self, query):
-        """
-        Method for create binary representation of simple query.
-        """
-
-        buff = "\x00" + query + "\x00"
-        buff = buff + struct.pack("!h", 0)
-        buff = struct.pack("!i", len(buff) + 4) + buff
-        return "P" + buff
-
-    def create_statement_description(self):
-        """
-        Create statement binary representation.
-        """
-
-        buff = "S" + "\x00"
-        buff = struct.pack("!i", len(buff) + 4) + buff
-        return "D" + buff
-
-    def create_flush_stetement(self):
-        """
-        Creates binary flush statement.
-        """
-
-        return 'H\x00\x00\x00\x04'
 
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
 
         # ssl negotiation
-        log.debug("SSL Negotiation. Temporary unsuported feature.")
-        
-        #This crashes if using unix sockets -> expected authentication request from server, but received N
-        #first_packet_data = source.recv(1024)
-        #source.send("N")
+        if not self.unix_socket_used:
+            log.debug("SSL Negotiation. Temporary unsuported feature.")
+            source.send("N")
     
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
@@ -130,7 +94,6 @@ class BouncerServer(StreamServer):
 
         if not from_pool:
             dst_sock.send(client_data)
-
             response = dst_sock.recv(1024)
             source.send(response)
 
@@ -146,7 +109,7 @@ class BouncerServer(StreamServer):
             for _in in _r:
                 _data = _in.recv(1024)
 
-                if _data == self.make_terminate_bytes() or len(_data) == 0:
+                if _data == utils.make_terminate_bytes() or len(_data) == 0:
                     error, error_generator = True, _in
                     break
 
@@ -169,9 +132,9 @@ class BouncerServer(StreamServer):
 
         # send reset query
         send_data = [
-            self.create_query_data("DISCARD ALL;"),
-            self.create_statement_description(),
-            self.create_flush_stetement(),
+            utils.create_query_data("DISCARD ALL;"),
+            utils.create_statement_description(),
+            utils.create_flush_stetement(),
         ]
         dst_sock.send(b"".join(send_data))
 
@@ -189,14 +152,3 @@ class BouncerServer(StreamServer):
             self.queues[client_data]['socket_queue'].put(dst_sock)
 
         log.debug("Returning connection to pool.")
-
-
-    def parse_client_data(self, data):
-        """
-        Parse client_data. This method is not used.
-        """
-
-        first, last = data[:8], data[8:]
-        length, protocol = struct.unpack("!ii", first)
-        data_array = last.split("\x00")
-        return length, protocol, data_array
