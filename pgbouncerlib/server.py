@@ -152,3 +152,4 @@ class BouncerServer(StreamServer):
             self.queues[client_data]['socket_queue'].put(dst_sock)
 
         log.debug("Returning connection to pool.")
+        log.debug("Current pool size: %s", self.queues[client_data]['socket_queue'].qsize())

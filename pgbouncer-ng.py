@@ -19,12 +19,12 @@ if __name__ == '__main__':
     
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
 
-    try:                                
+    try:                        
         opts, args = getopt.getopt(sys.argv[1:], "hn", ["help", "no-log"]) 
-        print 
-    except getopt.GetoptError:           
-        usage()                          
-        sys.exit(2)    
+    except getopt.GetoptError:
+        print
+        usage()
+        sys.exit(2)
 
     for o, a in opts:
         if o in ("-n", "--no-log"):
