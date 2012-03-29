@@ -17,18 +17,32 @@ import os
 from . import utils
 from .settings import settings
 
+
 def bind_unix_listener(path, reuse=False, backlog=100):
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) 
-    
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)     
+        
     if reuse:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.connect(path)
 
     else:
-        utils.unlink(path)
+        utils.unlink(path)        
         sock.bind(path)
         sock.listen(backlog) 
 
+    return sock
+    
+    
+def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    
+    if reuse:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.connect((bind_host, bind_port))
+    else:        
+        sock.bind((bind_host, bind_port))
+        sock.listen(backlog) 
+    
     return sock
 
 
@@ -44,12 +58,12 @@ class BouncerServer(StreamServer):
         if bind_host.startswith('unix'):
             sock = bind_unix_listener(bind_host[7:])
             log.info("Now listening on %s", bind_host)
-            super(BouncerServer, self).__init__(sock)
             self.unix_socket_used = True
-            return 
+        else:
+            sock = bind_tcp_listener(bind_host, bind_port)
+            log.info("Now listening on %s:%s", bind_host, bind_port)
         
-        log.info("Now listening on %s:%s", bind_host, bind_port)
-        super(BouncerServer, self).__init__((bind_host, bind_port))
+        super(BouncerServer, self).__init__(sock)
 
 
     def create_dst_connection(self, client_data):
@@ -69,9 +83,7 @@ class BouncerServer(StreamServer):
         if bind_host.startswith('unix'):
             sock = bind_unix_listener(bind_host[7:], reuse=True)
         else:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.connect((bind_host, bind_port))
+            sock = bind_tcp_listener(bind_host, bind_port, reuse=True)
 
         return False, sock
 
@@ -82,15 +94,15 @@ class BouncerServer(StreamServer):
         # ssl negotiation
         if not self.unix_socket_used:
             log.debug("SSL Negotiation. Temporary unsuported feature.")
-            source.send("N")
+            #source.send("N")
+
+        # create or get from pool one socket
+        from_pool, dst_sock = self.create_dst_connection(None)
+        response = None
     
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(1024)
-
-        # create or get from pool one socket
-        from_pool, dst_sock = self.create_dst_connection(client_data)
-        response = None
 
         if not from_pool:
             dst_sock.send(client_data)
@@ -153,3 +165,4 @@ class BouncerServer(StreamServer):
 
         log.debug("Returning connection to pool.")
         log.debug("Current pool size: %s", self.queues[client_data]['socket_queue'].qsize())
+
