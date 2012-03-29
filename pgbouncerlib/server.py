@@ -110,13 +110,14 @@ class BouncerServer(StreamServer):
                 source = wrap_socket(source, keyfile=local_ssl_key, certfile=local_ssl_cert, server_side=True)
                 source.settimeout(60)
 
-        # create or get from pool one socket
-        from_pool, dst_sock = self.create_dst_connection(None)
         response = None
     
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(1024)
+
+        # create or get from pool one socket
+        from_pool, dst_sock = self.create_dst_connection(client_data)
 
         if not from_pool:
             dst_sock.send(client_data)
