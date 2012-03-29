@@ -106,4 +106,7 @@ class Settings(object):
             sslopt = DEFAULTS['remote']['ssl']
         return sslopt
 
+    def remote_host_is_unix_socket(self):
+        return self.get_remote_host().startswith('unix')
+
 settings = Settings()

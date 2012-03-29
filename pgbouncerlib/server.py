@@ -52,6 +52,7 @@ def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
 class BouncerServer(StreamServer):
     queues = {}
     unix_socket_used = False
+    remote_unix_socket_used = False
 
     def __init__(self):
         max_connections = settings.get_global_maxconns()
@@ -93,9 +94,9 @@ class BouncerServer(StreamServer):
                     or mode & stat.S_IWOTH != 0:
                 log.error("Incorrect permissions on key file")
                 sys.exit(-1)
-        
-        super(BouncerServer, self).__init__(sock)
 
+        self.remote_unix_socket_used = settings.remote_host_is_unix_socket()
+        super(BouncerServer, self).__init__(sock)
 
     def create_dst_connection(self, client_data):
         """
@@ -145,10 +146,10 @@ class BouncerServer(StreamServer):
 
         if not from_pool:
             # send ssl negotiation
-            if remote_ssl_opt:
+            if remote_ssl_opt and not self.remote_unix_socket_used :
                 dst_sock.send(utils.make_ssl_request())
-                rsp = dst_sock.recv(1)
-                if rsp == "S":
+                rsp = dst_sock.recv(1024)
+                if rsp[0] == "S":
                     dst_sock = wrap_socket(dst_sock)
                 else:
                     raise Exception("Server does not support ssl connections")

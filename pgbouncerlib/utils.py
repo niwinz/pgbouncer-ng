@@ -63,3 +63,29 @@ def make_terminate_bytes():
     """
 
     return b'X\x00\x00\x00\x04'
+
+response_keys = {
+    "S": "severity",  # always present
+    "C": "code",      # always present
+    "M": "msg",       # always present
+    "D": "detail",
+    "H": "hint",
+    "P": "position",
+    "p": "_position",
+    "q": "_query",
+    "W": "where",
+    "F": "file",
+    "L": "line",
+    "R": "routine",
+}
+
+
+def parse_notice_response(data):
+    retval = {}
+    for s in data.split("\x00"):
+        if not s: continue
+        key, value = s[0], s[1:]
+        key = response_keys.get(key, key)
+        retval[key] = value
+
+    return retval
