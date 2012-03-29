@@ -96,7 +96,7 @@ class BouncerServer(StreamServer):
                 sys.exit(-1)
 
         self.remote_unix_socket_used = settings.remote_host_is_unix_socket()
-        super(BouncerServer, self).__init__(sock)
+        super(BouncerServer, self).__init__(sock, spawn=local_connection_pool)
 
     def create_dst_connection(self, client_data):
         """
@@ -119,20 +119,20 @@ class BouncerServer(StreamServer):
 
         return False, sock
 
-
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
 
         # ssl negotiation
         if not self.unix_socket_used:
-            data = source.recv(1024)
-
+            ssl_req_data = source.recv(1024)
             if self.local_ssl_opt:
                 log.debug("SSL Negotiation.")
                 source.send("S")
                 source = wrap_socket(source, keyfile=self.local_ssl_key, 
                     certfile=self.local_ssl_cert, server_side=True)
                 source.settimeout(60)
+            else:
+                source.send("N")
 
         response = None
     
@@ -202,7 +202,6 @@ class BouncerServer(StreamServer):
         log.debug("Reset database connection state.")
 
         response_data = dst_sock.recv(1024)
-
         if client_data not in self.queues:
             self.queues[client_data] = {
                 'socket_queue': Queue(),
@@ -214,4 +213,3 @@ class BouncerServer(StreamServer):
 
         log.debug("Returning connection to pool.")
         log.debug("Current pool size: %s", self.queues[client_data]['socket_queue'].qsize())
-
