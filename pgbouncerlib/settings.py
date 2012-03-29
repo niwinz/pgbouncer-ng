@@ -13,14 +13,14 @@ DEFAULT_CONFIG_FILES = [
 DEFAULTS = {
     'local': {
         'host': 'unix:///tmp/.s.PGSQL.6666',
-        'port': None,
-        'ssl': True,
+        'port': 6666,
+        'ssl': False,
         'ssl_key': 'example_server.key',
         'ssl_crt': 'example_server.crt',
     },
     'remote': {
         'host': 'unix:///tmp/.s.PGSQL.5432',
-        'port': None,
+        'port': 5432,
         'ssl': False,
     },
     'global': {
@@ -101,7 +101,7 @@ class Settings(object):
 
     def get_remote_ssl(self):
         try:
-            sslopt = self.parser.get('remote', 'ssl')
+            sslopt = self.parser.getboolean('remote', 'ssl')
         except (NoOptionError, NoSectionError):
             sslopt = DEFAULTS['remote']['ssl']
         return sslopt

@@ -14,6 +14,8 @@ import socket
 import struct
 import logging as log
 import os
+import stat
+import sys
 
 from . import utils
 from .settings import settings
@@ -63,6 +65,34 @@ class BouncerServer(StreamServer):
         else:
             sock = bind_tcp_listener(bind_host, bind_port)
             log.info("Now listening on %s:%s", bind_host, bind_port)
+
+        current_path = os.path.abspath(".")
+        self.local_ssl_opt, self.local_ssl_key, self.local_ssl_cert = (
+            settings.get_local_ssl(),
+            os.path.join(current_path, settings.get_local_ssl_key()),
+            os.path.join(current_path, settings.get_local_ssl_crt())
+        )
+
+        # check ssl files permissions
+        if self.local_ssl_opt:
+            key_file_uid = os.stat(self.local_ssl_key).st_uid
+            crt_file_uid = os.stat(self.local_ssl_cert).st_uid
+
+            try:
+                assert key_file_uid == os.getuid()
+                assert crt_file_uid == os.getuid()
+            except AssertionError:
+                log.error("Incorrect permissions on key and cert file.")
+                sys.exit(-1)
+
+            mode = stat.S_IMODE(os.stat(self.local_ssl_key).st_mode)
+            if mode & stat.S_IWUSR == 0 or mode & stat.S_IRUSR == 0 \
+                    or mode & stat.S_IRGRP != 0 \
+                    or mode & stat.S_IWGRP != 0 \
+                    or mode & stat.S_IROTH != 0 \
+                    or mode & stat.S_IWOTH != 0:
+                log.error("Incorrect permissions on key file")
+                sys.exit(-1)
         
         super(BouncerServer, self).__init__(sock)
 
@@ -91,23 +121,16 @@ class BouncerServer(StreamServer):
 
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
-        
-        current_path = os.path.abspath(".")
-
-        local_ssl_opt, local_ssl_key, local_ssl_cert = (
-            settings.get_local_ssl(),
-            os.path.join(current_path, settings.get_local_ssl_key()),
-            os.path.join(current_path, settings.get_local_ssl_crt())
-        )
 
         # ssl negotiation
         if not self.unix_socket_used:
             data = source.recv(1024)
 
-            if local_ssl_opt:
+            if self.local_ssl_opt:
                 log.debug("SSL Negotiation.")
                 source.send("S")
-                source = wrap_socket(source, keyfile=local_ssl_key, certfile=local_ssl_cert, server_side=True)
+                source = wrap_socket(source, keyfile=self.local_ssl_key, 
+                    certfile=self.local_ssl_cert, server_side=True)
                 source.settimeout(60)
 
         response = None
