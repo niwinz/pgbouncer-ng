@@ -11,13 +11,44 @@ import select
 import socket
 import struct
 import logging as log
+import os
+
+LISTEN_PORT=6666
+POSTGRES_HOST="localhost"
+POSTGRES_PORT=5432
+
+
+def unlink(path): 
+    from errno import ENOENT 
+    try: 
+        os.unlink(path) 
+    except OSError, ex: 
+        if ex.errno != ENOENT: 
+            raise 
+
+def bind_unix_listener(path, backlog=50, reuse=False):         
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) 
+    sock.setblocking(1) 
+    
+    if reuse:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.connect(path)
+    else:
+        unlink(path)
+        sock.bind(path)
+        sock.listen(backlog) 
+    
+    return sock
 
 
 class BouncerServer(StreamServer):
     queues = {}
 
     def __init__(self):
-        super(BouncerServer, self).__init__(('0.0.0.0', 6666))
+        #Unix socket +1
+        socket_path = '/tmp/.s.PGSQL.%i'%(LISTEN_PORT)        
+        super(BouncerServer, self).__init__(bind_unix_listener(socket_path))
+        #super(BouncerServer, self).__init__(('0.0.0.0', 6666))
     
     def make_ssl_request(self):
         """
@@ -37,15 +68,20 @@ class BouncerServer(StreamServer):
         Creates dst connection. Id client_data key exists in queues pool, 
         return existing socket, otherwise create new socket.
         """
-        log.debug("Creating socket for remote connection.")
+        #log.debug("Creating socket for remote connection.")
         if client_data in self.queues and self.queues[client_data]['socket_queue'].qsize() > 0:
-            log.debug("Remote connection found on pool, returning this.")
+            #log.debug("Remote connection found on pool, returning this.")
             return True, self.queues[client_data]['socket_queue'].get()
         
-        log.debug("Connection not found on pool, creating new.")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.connect(('127.0.0.1', 5432))
+        #log.debug("Connection not found on pool, creating new.")
+        
+        #Unix sockets +1
+        #sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        #sock.connect((POSTGRES_HOST, POSTGRES_PORT))
+        socket_path = '/tmp/.s.PGSQL.%i'%(POSTGRES_PORT)        
+        sock = bind_unix_listener(socket_path, reuse=True)
+        
         return False, sock
 
     def create_query_data(self, query):
@@ -75,15 +111,17 @@ class BouncerServer(StreamServer):
         return 'H\x00\x00\x00\x04'
 
     def handle(self, source, address):
-        log.debug("New remote client connected from %s", address)
+        #log.debug("New remote client connected from %s", address)
 
         # ssl negotiation
-        log.debug("SSL Negotiation. Temporary unsuported feature.")
-        first_packet_data = source.recv(1024)
-        source.send("N")
+        #log.debug("SSL Negotiation. Temporary unsuported feature.")
+        
+        #This crashes if using unix sockets -> expected authentication request from server, but received N
+        #first_packet_data = source.recv(1024)
+        #source.send("N")
     
         # Receive client data (used for create peer key)
-        log.debug("Waiting for client data...")
+        #log.debug("Waiting for client data...")
         client_data = source.recv(1024)
 
         # create or get from pool one socket
@@ -92,6 +130,7 @@ class BouncerServer(StreamServer):
 
         if not from_pool:
             dst_sock.send(client_data)
+
             response = dst_sock.recv(1024)
             source.send(response)
 
@@ -100,7 +139,7 @@ class BouncerServer(StreamServer):
 
         error_generator, error = None, False
         
-        log.debug("Entering on recv/send loop...")
+        #log.debug("Entering on recv/send loop...")
         while not error:
             _r, _w, _e = select.select([source, dst_sock], [], [])
 
@@ -117,16 +156,16 @@ class BouncerServer(StreamServer):
 
                 dst_sock.send(_data)
 
-        log.debug("Connection is closed in any socket.")
+        #log.debug("Connection is closed in any socket.")
             
         # if error found on database, close all connections
         if error_generator != source:
-            log.debug("Server connection is break. Closing all connections.")
+            #log.debug("Server connection is break. Closing all connections.")
             dst_sock.close()
             source.close()
             return
 
-        log.debug("Client connection is break.")
+        #log.debug("Client connection is break.")
 
         # send reset query
         send_data = [
@@ -136,7 +175,7 @@ class BouncerServer(StreamServer):
         ]
         dst_sock.send(b"".join(send_data))
 
-        log.debug("Reset database connection state.")
+        #log.debug("Reset database connection state.")
 
         response_data = dst_sock.recv(1024)
 
@@ -149,7 +188,7 @@ class BouncerServer(StreamServer):
         if self.queues[client_data]['socket_queue'].qsize() < 20:
             self.queues[client_data]['socket_queue'].put(dst_sock)
 
-        log.debug("Returning connection to pool.")
+        #log.debug("Returning connection to pool.")
 
 
     def parse_client_data(self, data):
