@@ -16,6 +16,7 @@ import logging as log
 import os
 import stat
 import sys
+import ssl
 
 from . import utils
 from .settings import settings
@@ -163,13 +164,27 @@ class BouncerServer(StreamServer):
 
         error_generator, error = None, False
         
+        source.setblocking(0)
+        dst_sock.setblocking(0)
+        
         log.debug("Entering on recv/send loop...")
         while not error:
             _r, _w, _e = select.select([source, dst_sock], [], [])
 
             for _in in _r:
-                _data = _in.recv(1024)
-
+                
+                #If the answer is bigger than 1024 we can have a problem!
+                #We must consume the complete buffer
+                _data = ""
+                more_data=True
+                while more_data:
+                    try:
+                        read_data = _in.recv(1024)
+                        _data = _data + read_data
+                        more_data = len(read_data)>0
+                    except ssl.SSLError, e:
+                        more_data=False
+                
                 if _data == utils.make_terminate_bytes() or len(_data) == 0:
                     error, error_generator = True, _in
                     break
