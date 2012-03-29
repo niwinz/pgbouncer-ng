@@ -7,6 +7,7 @@ from collections import defaultdict
 from gevent.server import StreamServer
 from gevent.queue import Queue
 from gevent.pool import Pool
+from gevent.ssl import wrap_socket
 
 import select
 import socket
@@ -90,11 +91,24 @@ class BouncerServer(StreamServer):
 
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
+        
+        current_path = os.path.abspath(".")
+
+        local_ssl_opt, local_ssl_key, local_ssl_cert = (
+            settings.get_local_ssl(),
+            os.path.join(current_path, settings.get_local_ssl_key()),
+            os.path.join(current_path, settings.get_local_ssl_crt())
+        )
 
         # ssl negotiation
         if not self.unix_socket_used:
-            log.debug("SSL Negotiation. Temporary unsuported feature.")
-            #source.send("N")
+            data = source.recv(1024)
+
+            if local_ssl_opt:
+                log.debug("SSL Negotiation.")
+                source.send("S")
+                source = wrap_socket(source, keyfile=local_ssl_key, certfile=local_ssl_cert, server_side=True)
+                source.settimeout(60)
 
         # create or get from pool one socket
         from_pool, dst_sock = self.create_dst_connection(None)

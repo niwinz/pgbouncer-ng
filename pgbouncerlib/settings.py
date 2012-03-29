@@ -14,7 +14,9 @@ DEFAULTS = {
     'local': {
         'host': 'unix:///tmp/.s.PGSQL.6666',
         'port': None,
-        'ssl': False 
+        'ssl': True,
+        'ssl_key': 'example_server.key',
+        'ssl_crt': 'example_server.crt',
     },
     'remote': {
         'host': 'unix:///tmp/.s.PGSQL.5432',
@@ -64,10 +66,24 @@ class Settings(object):
 
     def get_local_ssl(self):
         try:
-            sslopt = self.parser.get('local', 'ssl')
+            sslopt = self.parser.getboolean('local', 'ssl')
         except (NoOptionError, NoSectionError):
             sslopt = DEFAULTS['local']['ssl']
         return sslopt
+
+    def get_local_ssl_key(self):
+        try:
+            ssl_key = self.parser.get('local', 'ssl_key')
+        except (NoOptionError, NoSectionError):
+            ssl_key = DEFAULTS['local']['ssl_key']
+        return ssl_key
+
+    def get_local_ssl_crt(self):
+        try:
+            ssl_crt = self.parser.get('local', 'ssl_crt')
+        except (NoOptionError, NoSectionError):
+            ssl_crt = DEFAULTS['local']['ssl_crt']
+        return ssl_crt
 
     def get_remote_port(self):
         try:
