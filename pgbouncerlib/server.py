@@ -118,8 +118,18 @@ class BouncerServer(StreamServer):
 
         # create or get from pool one socket
         from_pool, dst_sock = self.create_dst_connection(client_data)
+        remote_ssl_opt = settings.get_remote_ssl()
 
         if not from_pool:
+            # send ssl negotiation
+            if remote_ssl_opt:
+                dst_sock.send(utils.make_ssl_request())
+                rsp = dst_sock.recv(1)
+                if rsp == "S":
+                    dst_sock = wrap_socket(dst_sock)
+                else:
+                    raise Exception("Server does not support ssl connections")
+
             dst_sock.send(client_data)
             response = dst_sock.recv(1024)
             source.send(response)

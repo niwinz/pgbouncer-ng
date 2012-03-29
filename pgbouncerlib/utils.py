@@ -56,6 +56,7 @@ def make_ssl_request():
     """
     return struct.pack("!ii", 8, 80877103)
 
+
 def make_terminate_bytes():
     """
     Returns terminate socket packet data.
