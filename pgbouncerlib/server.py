@@ -127,9 +127,10 @@ class BouncerServer(StreamServer):
         """
         
         log.debug("Creating socket for remote connection.")
-        if client_data in self.queues and self.queues[client_data]['socket_queue'].qsize() > 0:
+        if client_data in self.queues and self.queues[client_data].qsize() > 0:
             log.debug("Remote connection found on pool, returning this.")
-            return True, self.queues[client_data]['socket_queue'].get()
+            socket, response, auth_response = self.queues[client_data].get()
+            return True, socket, response, auth_response
         
         log.debug("Connection not found on pool, creating new.")
         bind_host, bind_port = settings.get_remote_host(), settings.get_remote_port()
@@ -139,7 +140,7 @@ class BouncerServer(StreamServer):
         else:
             sock = bind_tcp_listener(bind_host, bind_port, reuse=True)
 
-        return False, sock
+        return False, sock, None, None
 
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
@@ -156,7 +157,7 @@ class BouncerServer(StreamServer):
             else:
                 source.send("N")
 
-        response = None
+        response, auth_response = None, None
     
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
@@ -164,7 +165,7 @@ class BouncerServer(StreamServer):
         #client_data = blocking_read_until_nodata(source)
         
         # create or get from pool one socket
-        from_pool, dst_sock = self.create_dst_connection(client_data)
+        from_pool, dst_sock, response, auth_response = self.create_dst_connection(client_data)
         remote_ssl_opt = settings.get_remote_ssl()
 
         if not from_pool:
@@ -187,13 +188,36 @@ class BouncerServer(StreamServer):
                 user_pass = source.recv(1024)
                 dst_sock.send(user_pass)
                 salt = user_pass[5:]     
-                client_data = client_data + salt
-                response = dst_sock.recv(1024)
-
-            source.send(response)
-
+                #client_data = client_data + salt
+                auth_response = dst_sock.recv(1024)
+                source.send(auth_response)
+            else:
+                source.send(response)
+        
         else:
-            source.send(self.queues[client_data]['response'])
+            auth_code = struct.unpack("!i", response[5:][:4])[0]
+            if auth_code == 5:
+                log.debug("Authenticating client...")
+                source.send(response)
+                user_pass = source.recv(1024)
+                #dst_sock.send(user_pass)
+                #salt = user_pass[5:]     
+                #client_data = client_data + salt
+                #auth_response = dst_sock.recv(1024)
+                source.send(auth_response)
+            else:
+                source.send(response)
+
+        #else:
+        #    if user_pass:
+        #        source.send(response)
+        #        user_pass = source.recv(1024)
+        #        dst_sock.send(user_pass)
+        #        auth_response = dst_sock.recv(1024)
+        #        source.send(auth_response)
+
+        #    else:
+        #        source.send(response)
 
         error_generator, error = None, False
         
@@ -240,13 +264,10 @@ class BouncerServer(StreamServer):
         response_data = read_until_fail(dst_sock)
         
         if client_data not in self.queues:
-            self.queues[client_data] = {
-                'socket_queue': Queue(),
-                'response': response,
-            }
+            self.queues[client_data] = Queue()
         
-        if self.queues[client_data]['socket_queue'].qsize() < 20:
-            self.queues[client_data]['socket_queue'].put(dst_sock)
+        if self.queues[client_data].qsize() < 20:
+            self.queues[client_data].put((dst_sock, response, auth_response))
 
         log.debug("Returning connection to pool.")
-        log.debug("Current pool size: %s", self.queues[client_data]['socket_queue'].qsize())
+        log.debug("Current pool size: %s", self.queues[client_data].qsize())
