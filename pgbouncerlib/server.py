@@ -78,7 +78,7 @@ def read_until_fail(sock):
             read_data = sock.recv(1024)
             retval.append(read_data)
             more_data = len(read_data)>0
-        except ssl.SSLError, e:
+        except:
             more_data=False    
     return "".join(retval)
 
