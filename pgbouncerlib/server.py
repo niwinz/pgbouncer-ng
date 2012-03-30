@@ -49,27 +49,6 @@ def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
     
     return sock
 
-def read_bytes(sock, byte_count):
-    retval = []
-    bytes_read = 0
-    while bytes_read < byte_count:
-        addt_data = sock.recv(1024)
-        bytes_read += len(addt_data)
-        
-        print bytes_read, byte_count
-        
-        #~ assert bytes_read <= byte_count
-        retval.append(addt_data)
-    return "".join(retval)
-
-def read_message(sock):
-    bytes = read_bytes(sock, 5)   
-    message_code = bytes[0]   
-    data_len = struct.unpack("!i", bytes[1:])[0] - 4
-    bytes = read_bytes(sock, data_len)
-    assert len(bytes) == data_len
-    return bytes
-
 def read_until_fail(sock):
     retval = []
     more_data=True
@@ -81,6 +60,17 @@ def read_until_fail(sock):
         except:
             more_data=False    
     return "".join(retval)
+
+#def read_until_fail(sock):
+#    retval = []
+#    while True:
+#        read_data = sock.recv(1024)
+#        if not read_data:
+#            break
+#
+#        retval.append(read_data)
+#
+#    return "".join(retval)
 
 class BouncerServer(StreamServer):
     queues = {}
@@ -200,21 +190,26 @@ class BouncerServer(StreamServer):
         dst_sock.setblocking(0)
         
         log.debug("Entering on recv/send loop...")
+        sockets_list = [source, dst_sock]
+
         while not error:
-            _r, _w, _e = select.select([source, dst_sock], [], [])
+            _r, _w, _e = select.select(sockets_list, sockets_list, [])
 
             for _in in _r:
                 _data = read_until_fail(_in)
                 
-                if _data == utils.make_terminate_bytes() or len(_data) == 0:
+                if not _data or _data[0] == 'X':
                     error, error_generator = True, _in
                     break
 
-                if _in == dst_sock:
-                    source.send(_data)
-                    continue
+                for _out in _w:
+                    _out.sendall(_data)
 
-                dst_sock.send(_data)
+                #if _in == dst_sock:
+                #    source.send(_data)
+                #    continue
+
+                #dst_sock.send(_data)
 
         log.debug("Connection is closed in any socket.")
             
@@ -237,7 +232,7 @@ class BouncerServer(StreamServer):
 
         log.debug("Reset database connection state.")
 
-        response_data = read_until_fail(dst_sock)
+        #response_data = read_until_fail(dst_sock)
         
         if client_data not in self.queues:
             self.queues[client_data] = {
