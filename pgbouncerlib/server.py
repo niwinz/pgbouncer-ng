@@ -8,6 +8,9 @@ from gevent.server import StreamServer
 from gevent.queue import Queue
 from gevent.pool import Pool
 from gevent.ssl import wrap_socket
+from gevent.event import Event
+import gevent
+
 
 import select
 import socket
@@ -70,16 +73,26 @@ def read_message(sock):
     assert len(bytes) == data_len
     return bytes
 
+#def read_until_fail(sock):
+#    retval = []
+#    more_data=True
+#    while more_data:
+#        try:
+#            read_data = sock.recv(1024)
+#            retval.append(read_data)
+#            more_data = len(read_data)>0
+#        except:
+#            more_data=False    
+#    return "".join(retval)
+
 def read_until_fail(sock):
     retval = []
-    more_data=True
-    while more_data:
-        try:
-            read_data = sock.recv(1024)
-            retval.append(read_data)
-            more_data = len(read_data)>0
-        except:
-            more_data=False    
+    while True:
+        data = sock.recv(1024)
+        if not data:
+            break
+
+        retval.append(data)
     return "".join(retval)
 
 class BouncerServer(StreamServer):
@@ -196,49 +209,29 @@ class BouncerServer(StreamServer):
 
         error_generator, error = None, False
         
-        source.setblocking(0)
-        dst_sock.setblocking(0)
+        #source.setblocking(0)
+        #dst_sock.setblocking(0)
         
         log.debug("Entering on recv/send loop...")
-        while not error:
-            _r, _w, _e = select.select([source, dst_sock], [], [])
-
-            for _in in _r:
-                _data = read_until_fail(_in)
-                
-                if _data == utils.make_terminate_bytes() or len(_data) == 0:
-                    error, error_generator = True, _in
-                    break
-
-                if _in == dst_sock:
-                    source.send(_data)
-                    continue
-
-                dst_sock.send(_data)
-
+        
+        forwarder1 = gevent.spawn(forward, source, dst_sock)
+        forwarder2 = gevent.spawn(forward, dst_sock, source)
+        gevent.joinall([forwarder1, forwarder2], count=1)
+        gevent.killall([forwarder1, forwarder2])
+        
         log.debug("Connection is closed in any socket.")
             
-        # if error found on database, close all connections
-        if error_generator != source:
-            log.debug("Server connection is break. Closing all connections.")
-            dst_sock.close()
-            source.close()
-            return
-
-        log.debug("Client connection is break.")
-
         # send reset query
         send_data = [
             utils.create_query_data("DISCARD ALL;"),
             utils.create_statement_description(),
             utils.create_flush_stetement(),
         ]
-        dst_sock.send(b"".join(send_data))
 
         log.debug("Reset database connection state.")
 
-        response_data = read_until_fail(dst_sock)
-        
+        dst_sock.send(b"".join(send_data))
+
         if client_data not in self.queues:
             self.queues[client_data] = {
                 'socket_queue': Queue(),
@@ -250,3 +243,14 @@ class BouncerServer(StreamServer):
 
         log.debug("Returning connection to pool.")
         log.debug("Current pool size: %s", self.queues[client_data]['socket_queue'].qsize())
+
+
+def forward(source, dest):
+    # source_address = source.getpeername()
+    # dest_address = dest.getpeername()
+    while True:
+        data = source.recv(1024)
+        #print '%s->%s: %r' % (source_address, dest_address, data)
+        if not data or data == utils.make_terminate_bytes():
+            break
+        dest.send(data)
