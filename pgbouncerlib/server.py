@@ -55,10 +55,6 @@ def read_bytes(sock, byte_count):
     while bytes_read < byte_count:
         addt_data = sock.recv(1024)
         bytes_read += len(addt_data)
-        
-        print bytes_read, byte_count
-        
-        #~ assert bytes_read <= byte_count
         retval.append(addt_data)
     return "".join(retval)
 
@@ -172,7 +168,7 @@ class BouncerServer(StreamServer):
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(1024)
-
+        
         # create or get from pool one socket
         from_pool, dst_sock = self.create_dst_connection(client_data)
         remote_ssl_opt = settings.get_remote_ssl()
@@ -189,6 +185,17 @@ class BouncerServer(StreamServer):
 
             dst_sock.send(client_data)
             response = dst_sock.recv(1024)
+
+            #AuthenticationRequest
+            #BIG TODO: if first time auth works then auth is always valid
+            #if first time fails it's always invalid :D
+            if response[0] == "R":
+                log.debug("Authenticating client...")
+                source.send(response)
+                user_pass = source.recv(1024)
+                dst_sock.send(user_pass)
+                response = dst_sock.recv(1024)
+                
             source.send(response)
 
         else:
@@ -213,7 +220,7 @@ class BouncerServer(StreamServer):
                 if _in == dst_sock:
                     source.send(_data)
                     continue
-
+    
                 dst_sock.send(_data)
 
         log.debug("Connection is closed in any socket.")
