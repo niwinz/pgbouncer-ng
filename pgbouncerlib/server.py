@@ -49,6 +49,38 @@ def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
     
     return sock
 
+def read_bytes(sock, byte_count):
+    retval = []
+    bytes_read = 0
+    while bytes_read < byte_count:
+        addt_data = sock.recv(1024)
+        bytes_read += len(addt_data)
+        
+        print bytes_read, byte_count
+        
+        #~ assert bytes_read <= byte_count
+        retval.append(addt_data)
+    return "".join(retval)
+
+def read_message(sock):
+    bytes = read_bytes(sock, 5)   
+    message_code = bytes[0]   
+    data_len = struct.unpack("!i", bytes[1:])[0] - 4
+    bytes = read_bytes(sock, data_len)
+    assert len(bytes) == data_len
+    return bytes
+
+def read_until_fail(sock):
+    retval = []
+    more_data=True
+    while more_data:
+        try:
+            read_data = sock.recv(1024)
+            retval.append(read_data)
+            more_data = len(read_data)>0
+        except ssl.SSLError, e:
+            more_data=False    
+    return "".join(retval)
 
 class BouncerServer(StreamServer):
     queues = {}
@@ -172,18 +204,7 @@ class BouncerServer(StreamServer):
             _r, _w, _e = select.select([source, dst_sock], [], [])
 
             for _in in _r:
-                
-                #If the answer is bigger than 1024 we can have a problem!
-                #We must consume the complete buffer
-                _data = ""
-                more_data=True
-                while more_data:
-                    try:
-                        read_data = _in.recv(1024)
-                        _data = _data + read_data
-                        more_data = len(read_data)>0
-                    except ssl.SSLError, e:
-                        more_data=False
+                _data = read_until_fail(_in)
                 
                 if _data == utils.make_terminate_bytes() or len(_data) == 0:
                     error, error_generator = True, _in
@@ -216,7 +237,8 @@ class BouncerServer(StreamServer):
 
         log.debug("Reset database connection state.")
 
-        response_data = dst_sock.recv(1024)
+        response_data = read_until_fail(dst_sock)
+        
         if client_data not in self.queues:
             self.queues[client_data] = {
                 'socket_queue': Queue(),
