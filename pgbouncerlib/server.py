@@ -49,22 +49,6 @@ def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
     
     return sock
 
-def read_bytes(sock, byte_count):
-    retval = []
-    bytes_read = 0
-    while bytes_read < byte_count:
-        addt_data = sock.recv(1024)
-        bytes_read += len(addt_data)
-        retval.append(addt_data)
-    return "".join(retval)
-
-def read_message(sock):
-    bytes = read_bytes(sock, 5)   
-    message_code = bytes[0]   
-    data_len = struct.unpack("!i", bytes[1:])[0] - 4
-    bytes = read_bytes(sock, data_len)
-    assert len(bytes) == data_len
-    return bytes
 
 def read_until_fail(sock):
     retval = []
@@ -78,15 +62,24 @@ def read_until_fail(sock):
             more_data=False    
     return "".join(retval)
 
+
+def blocking_read_until_nodata(sock):
+    retval = []
+    while True:
+        data = sock.recv(1024)
+        if not data:
+            break
+
+        retval.append(data)
+    return "".join(retval)
+        
+
 class BouncerServer(StreamServer):
     queues = {}
     unix_socket_used = False
     remote_unix_socket_used = False
 
     def __init__(self):
-        max_connections = settings.get_global_maxconns()
-        local_connection_pool = Pool(max_connections)
-
         bind_host, bind_port = settings.get_local_host(), settings.get_local_port()
         if bind_host.startswith('unix'):
             sock = bind_unix_listener(bind_host[7:])
@@ -125,7 +118,7 @@ class BouncerServer(StreamServer):
                 sys.exit(-1)
 
         self.remote_unix_socket_used = settings.remote_host_is_unix_socket()
-        super(BouncerServer, self).__init__(sock, spawn=local_connection_pool)
+        super(BouncerServer, self).__init__(sock)
 
     def create_dst_connection(self, client_data):
         """
@@ -168,6 +161,7 @@ class BouncerServer(StreamServer):
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(1024)
+        #client_data = blocking_read_until_nodata(source)
         
         # create or get from pool one socket
         from_pool, dst_sock = self.create_dst_connection(client_data)
@@ -186,15 +180,16 @@ class BouncerServer(StreamServer):
             dst_sock.send(client_data)
             response = dst_sock.recv(1024)
 
-            #AuthenticationRequest
-            if response[0] == "R":
+            auth_code = struct.unpack("!i", response[5:][:4])[0]
+            if auth_code == 5:
                 log.debug("Authenticating client...")
                 source.send(response)
                 user_pass = source.recv(1024)
                 dst_sock.send(user_pass)
                 salt = user_pass[5:]     
-                client_data = client_data+salt
+                client_data = client_data + salt
                 response = dst_sock.recv(1024)
+
             source.send(response)
 
         else:
@@ -212,7 +207,7 @@ class BouncerServer(StreamServer):
             for _in in _r:
                 _data = read_until_fail(_in)
                 
-                if _data == utils.make_terminate_bytes() or len(_data) == 0:
+                if not _data or _data[0] == b'X':
                     error, error_generator = True, _in
                     break
 
@@ -242,7 +237,6 @@ class BouncerServer(StreamServer):
         dst_sock.send(b"".join(send_data))
 
         log.debug("Reset database connection state.")
-
         response_data = read_until_fail(dst_sock)
         
         if client_data not in self.queues:
