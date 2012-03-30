@@ -187,15 +187,14 @@ class BouncerServer(StreamServer):
             response = dst_sock.recv(1024)
 
             #AuthenticationRequest
-            #BIG TODO: if first time auth works then auth is always valid
-            #if first time fails it's always invalid :D
             if response[0] == "R":
                 log.debug("Authenticating client...")
                 source.send(response)
                 user_pass = source.recv(1024)
                 dst_sock.send(user_pass)
+                salt = user_pass[5:]     
+                client_data = client_data+salt
                 response = dst_sock.recv(1024)
-                
             source.send(response)
 
         else:
