@@ -8,6 +8,7 @@ from gevent.server import StreamServer
 from gevent.queue import Queue
 from gevent.pool import Pool
 from gevent.ssl import wrap_socket
+from gevent.queue import Empty
 
 import select
 import socket
@@ -78,6 +79,14 @@ class BouncerServer(StreamServer):
     queues = {}
     unix_socket_used = False
     remote_unix_socket_used = False
+
+    def __del__(self):
+        for queue in server.queues.iteritems():
+            try:
+                sock = queue.get(False)
+                sock.close()
+            except Empty:
+                pass
 
     def __init__(self):
         bind_host, bind_port = settings.get_local_host(), settings.get_local_port()
@@ -162,7 +171,7 @@ class BouncerServer(StreamServer):
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(1024)
-        #client_data = blocking_read_until_nodata(source)
+        # client_data = blocking_read_until_nodata(source)
         
         # create or get from pool one socket
         from_pool, dst_sock, response, auth_response = self.create_dst_connection(client_data)
@@ -170,7 +179,7 @@ class BouncerServer(StreamServer):
 
         if not from_pool:
             # send ssl negotiation
-            if remote_ssl_opt and not self.remote_unix_socket_used :
+            if remote_ssl_opt and not self.remote_unix_socket_used:
                 dst_sock.send(utils.make_ssl_request())
                 rsp = dst_sock.recv(1024)
                 if rsp[0] == "S":
@@ -198,26 +207,9 @@ class BouncerServer(StreamServer):
             auth_code = struct.unpack("!i", response[5:][:4])[0]
             if auth_code == 5:
                 log.debug("Authenticating client...")
-                source.send(response)
-                user_pass = source.recv(1024)
-                #dst_sock.send(user_pass)
-                #salt = user_pass[5:]     
-                #client_data = client_data + salt
-                #auth_response = dst_sock.recv(1024)
                 source.send(auth_response)
             else:
                 source.send(response)
-
-        #else:
-        #    if user_pass:
-        #        source.send(response)
-        #        user_pass = source.recv(1024)
-        #        dst_sock.send(user_pass)
-        #        auth_response = dst_sock.recv(1024)
-        #        source.send(auth_response)
-
-        #    else:
-        #        source.send(response)
 
         error_generator, error = None, False
         
