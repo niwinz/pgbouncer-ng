@@ -87,6 +87,7 @@ class BouncerServer(StreamServer):
                 sock.close()
             except Empty:
                 pass
+        self.close()
 
     def __init__(self):
         bind_host, bind_port = settings.get_local_host(), settings.get_local_port()
@@ -171,7 +172,6 @@ class BouncerServer(StreamServer):
             
             auth_error = self.check_auth_error(auth_response)
             self.send(source, auth_response)
-
         return auth_error, response, auth_response
 
     def handle(self, source, address):
@@ -212,28 +212,6 @@ class BouncerServer(StreamServer):
 
             dst_sock.send(client_data)
             auth_error, response, auth_response = self.handle_authentication(source, dst_sock)
-            #response = dst_sock.recv(1024)
-
-            #auth_code = struct.unpack("!i", response[5:][:4])[0]
-            #if auth_code == 5:
-            #    log.debug("Authenticating client...")
-            #    source.send(response)
-            #    user_pass = source.recv(1024)
-            #    dst_sock.send(user_pass)
-
-            #    auth_response = dst_sock.recv(1024)
-
-            #    # on incorrect password, server returns error.
-            #    # intent send this to client, if can not sent, ignore this.
-            #    if auth_response[0] == 'E':
-            #        self.send(source, auth_response)
-            #        source.close()
-            #        dst_sock.close()
-            #        return
-            #    else:
-            #        source.send(auth_response)
-            #else:
-            #    source.send(response)
         
         else:
             auth_code = struct.unpack("!i", response[5:][:4])[0]
@@ -243,7 +221,7 @@ class BouncerServer(StreamServer):
             else:
                 source.send(response)
 
-        error_generator, error = None, False
+        error_generator, auth_error, error = None, False, False
         
         source.setblocking(0)
         dst_sock.setblocking(0)
@@ -259,9 +237,9 @@ class BouncerServer(StreamServer):
                     error, error_generator = True, _in
                     break
 
-                #if _data[0] == 'E':
-                #    source.send(_data)
-                #    error, error_generator = True, _in
+                if _data[0] == 'E':
+                    source.send(_data)
+                    error, auth_error = True, True
 
                 if _in == dst_sock:
                     source.send(_data)
@@ -276,7 +254,7 @@ class BouncerServer(StreamServer):
         log.debug("Connection is closed in any socket.")
             
         # if error found on database, close all connections
-        if error_generator != source:
+        if error_generator != source or auth_error:
             log.debug("Server connection is break. Closing all connections.")
             dst_sock.close()
             source.close()

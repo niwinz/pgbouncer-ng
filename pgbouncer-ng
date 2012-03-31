@@ -38,4 +38,7 @@ if __name__ == '__main__':
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        server.close()
+        try:
+            server.close()
+        except AttributeError:
+            pass
