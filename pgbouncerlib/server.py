@@ -235,13 +235,14 @@ class BouncerServer(StreamServer):
 
             for _in in _r:
                 _data = read_until_fail(_in)
-                
-                if not _data or _data[0] == b'X'::
+
+                if not _data or _data[0] == b'X':
                     error, error_generator = True, _in
                     break
 
                 if _data[0] == 'E':
-                    source.send(_data)
+                    self.send(source, _data)
+                    #source.send(_data)
                     error, auth_error = True, True
 
                 if _in == dst_sock:
@@ -266,9 +267,13 @@ class BouncerServer(StreamServer):
             utils.create_statement_description(),
             utils.create_flush_stetement(),
         ]
+        
         #dst_sock.send(b"".join(send_data))
-        ok = self.send(dst_sock, b"".join(send_data))
-    
+        if _data:
+            ok = self.send(dst_sock, b"".join(send_data))
+        else:
+            ok = False
+            
         if ok:
             log.debug("Reset database connection state.")
             response_data = read_until_fail(dst_sock)
