@@ -22,7 +22,6 @@ import ssl
 from . import utils
 from .settings import settings
 
-
 def bind_unix_listener(path, reuse=False, backlog=100):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)     
         
@@ -158,6 +157,10 @@ class BouncerServer(StreamServer):
         return True
 
     def handle_authentication(self, source, dst_sock):
+        """
+        Method for correct handle authentications for new conenctions.
+        """
+
         response = dst_sock.recv(1024)
         source.send(response)
 
@@ -194,14 +197,13 @@ class BouncerServer(StreamServer):
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
         client_data = source.recv(2024)
-        #client_data = blocking_read_until_nodata(source)
         
         # create or get from pool one socket
         from_pool, dst_sock, response, auth_response = self.create_dst_connection(client_data)
         remote_ssl_opt = settings.get_remote_ssl()
 
         if not from_pool:
-            # send ssl negotiation
+            # send ssl negotiation with remote server
             if remote_ssl_opt and not self.remote_unix_socket_used:
                 dst_sock.send(utils.make_ssl_request())
                 rsp = dst_sock.recv(1024)
@@ -226,8 +228,8 @@ class BouncerServer(StreamServer):
         source.setblocking(0)
         dst_sock.setblocking(0)
         
-        auth_error = False
         log.debug("Entering on recv/send loop...")
+        
         while not error:
             _r, _w, _e = select.select([source, dst_sock], [], [])
 
@@ -258,7 +260,6 @@ class BouncerServer(StreamServer):
             return
 
         log.debug("Client connection is break.")
-        
         # send reset query
         send_data = [
             utils.create_query_data("DISCARD ALL;"),
@@ -289,6 +290,8 @@ class BouncerServer(StreamServer):
             return True
         except socket.error as e:
             print "Socket.Error", str(e)
+            return False
+
         except IOError as e:
             print "IOError:", e.errno
-
+            return False
