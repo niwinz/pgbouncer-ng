@@ -81,12 +81,13 @@ class BouncerServer(StreamServer):
     remote_unix_socket_used = False
 
     def __del__(self):
-        for queue in server.queues.iteritems():
+        for name, queue in self.queues.iteritems():
             try:
-                sock = queue.get(False)
+                sock, _, _, _ = queue.get(False)
                 sock.close()
             except Empty:
                 pass
+        self.close()
 
     def __init__(self):
         bind_host, bind_port = settings.get_local_host(), settings.get_local_port()
@@ -151,6 +152,28 @@ class BouncerServer(StreamServer):
 
         return False, sock, None, None
 
+    def check_auth_error(self, response):
+        if response and response[0] != 'E':
+            return False
+        return True
+
+    def handle_authentication(self, source, dst_sock):
+        response = dst_sock.recv(1024)
+        source.send(response)
+
+        auth_error, auth_response = False, False
+
+        auth_code = struct.unpack("!i", response[5:][:4])[0]
+        if auth_code == 5:
+            log.debug("Authenticating client...")
+            user_pass = source.recv(1024)
+            dst_sock.send(user_pass)
+            auth_response = dst_sock.recv(1024)
+            
+            auth_error = self.check_auth_error(auth_response)
+            self.send(source, auth_response)
+        return auth_error, response, auth_response
+
     def handle(self, source, address):
         log.debug("New remote client connected from %s", address)
 
@@ -170,8 +193,8 @@ class BouncerServer(StreamServer):
     
         # Receive client data (used for create peer key)
         log.debug("Waiting for client data...")
-        client_data = source.recv(1024)
-        # client_data = blocking_read_until_nodata(source)
+        client_data = source.recv(2024)
+        #client_data = blocking_read_until_nodata(source)
         
         # create or get from pool one socket
         from_pool, dst_sock, response, auth_response = self.create_dst_connection(client_data)
@@ -188,20 +211,7 @@ class BouncerServer(StreamServer):
                     raise Exception("Server does not support ssl connections")
 
             dst_sock.send(client_data)
-            response = dst_sock.recv(1024)
-
-            auth_code = struct.unpack("!i", response[5:][:4])[0]
-            if auth_code == 5:
-                log.debug("Authenticating client...")
-                source.send(response)
-                user_pass = source.recv(1024)
-                dst_sock.send(user_pass)
-                salt = user_pass[5:]     
-                #client_data = client_data + salt
-                auth_response = dst_sock.recv(1024)
-                source.send(auth_response)
-            else:
-                source.send(response)
+            auth_error, response, auth_response = self.handle_authentication(source, dst_sock)
         
         else:
             auth_code = struct.unpack("!i", response[5:][:4])[0]
@@ -211,7 +221,7 @@ class BouncerServer(StreamServer):
             else:
                 source.send(response)
 
-        error_generator, error = None, False
+        error_generator, auth_error, error = None, False, False
         
         source.setblocking(0)
         dst_sock.setblocking(0)
@@ -224,11 +234,13 @@ class BouncerServer(StreamServer):
             for _in in _r:
                 _data = read_until_fail(_in)
                 
-                #_data[0] == b'E' -> Authentication error
-                if not _data or _data[0] == b'X' or _data[0] == b'E':
+                if not _data or _data[0] == b'X'::
                     error, error_generator = True, _in
-                    auth_error = True
                     break
+
+                if _data[0] == 'E':
+                    source.send(_data)
+                    error, auth_error = True, True
 
                 if _in == dst_sock:
                     source.send(_data)
@@ -246,23 +258,37 @@ class BouncerServer(StreamServer):
             return
 
         log.debug("Client connection is break.")
-
+        
         # send reset query
         send_data = [
             utils.create_query_data("DISCARD ALL;"),
             utils.create_statement_description(),
             utils.create_flush_stetement(),
         ]
-        dst_sock.send(b"".join(send_data))
+        #dst_sock.send(b"".join(send_data))
+        ok = self.send(dst_sock, b"".join(send_data))
+    
+        if ok:
+            log.debug("Reset database connection state.")
+            response_data = read_until_fail(dst_sock)
+            
+            if client_data not in self.queues:
+                self.queues[client_data] = Queue()
+            
+            if self.queues[client_data].qsize() < 20:
+                self.queues[client_data].put((dst_sock, response, auth_response))
 
-        log.debug("Reset database connection state.")
-        response_data = read_until_fail(dst_sock)
-        
-        if client_data not in self.queues:
-            self.queues[client_data] = Queue()
-        
-        if self.queues[client_data].qsize() < 20:
-            self.queues[client_data].put((dst_sock, response, auth_response))
+            log.debug("Returning connection to pool.")
+            log.debug("Current pool size: %s", self.queues[client_data].qsize())
+        else:
+            dst_sock.close()
 
-        log.debug("Returning connection to pool.")
-        log.debug("Current pool size: %s", self.queues[client_data].qsize())
+    def send(self, sock, data):
+        try:
+            sock.send(data)
+            return True
+        except socket.error as e:
+            print "Socket.Error", str(e)
+        except IOError as e:
+            print "IOError:", e.errno
+
