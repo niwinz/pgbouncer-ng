@@ -216,6 +216,7 @@ class BouncerServer(StreamServer):
         source.setblocking(0)
         dst_sock.setblocking(0)
         
+        auth_error = False
         log.debug("Entering on recv/send loop...")
         while not error:
             _r, _w, _e = select.select([source, dst_sock], [], [])
@@ -223,8 +224,10 @@ class BouncerServer(StreamServer):
             for _in in _r:
                 _data = read_until_fail(_in)
                 
-                if not _data or _data[0] == b'X':
+                #_data[0] == b'E' -> Authentication error
+                if not _data or _data[0] == b'X' or _data[0] == b'E':
                     error, error_generator = True, _in
+                    auth_error = True
                     break
 
                 if _in == dst_sock:
@@ -235,8 +238,8 @@ class BouncerServer(StreamServer):
 
         log.debug("Connection is closed in any socket.")
             
-        # if error found on database, close all connections
-        if error_generator != source:
+        # if error found on database or authentication error, close all connections
+        if error_generator != source or auth_error:
             log.debug("Server connection is break. Closing all connections.")
             dst_sock.close()
             source.close()
