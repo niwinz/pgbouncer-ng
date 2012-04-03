@@ -39,9 +39,9 @@ def bind_unix_listener(path, reuse=False, backlog=100):
     
 def bind_tcp_listener(bind_host, bind_port, reuse=False, backlog=100):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
     if reuse:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.connect((bind_host, bind_port))
     else:        
         sock.bind((bind_host, bind_port))
@@ -242,14 +242,15 @@ class BouncerServer(StreamServer):
 
                 if _data[0] == 'E':
                     self.send(source, _data)
-                    #source.send(_data)
                     error, auth_error = True, True
 
                 if _in == dst_sock:
-                    source.send(_data)
-                    continue
-    
-                dst_sock.send(_data)
+                    ok = self.send(source, _data)
+                    if not ok:
+                        error, error_generator = True, _in
+                        break
+                else:
+                    self.send(dst_sock, _data)
 
         log.debug("Connection is closed in any socket.")
             
@@ -261,6 +262,7 @@ class BouncerServer(StreamServer):
             return
 
         log.debug("Client connection is break.")
+
         # send reset query
         send_data = [
             utils.create_query_data("DISCARD ALL;"),
@@ -268,11 +270,9 @@ class BouncerServer(StreamServer):
             utils.create_flush_stetement(),
         ]
         
-        #dst_sock.send(b"".join(send_data))
+        ok = False
         if _data:
             ok = self.send(dst_sock, b"".join(send_data))
-        else:
-            ok = False
             
         if ok:
             log.debug("Reset database connection state.")
@@ -281,7 +281,7 @@ class BouncerServer(StreamServer):
             if client_data not in self.queues:
                 self.queues[client_data] = Queue()
             
-            if self.queues[client_data].qsize() < 20:
+            if self.queues[client_data].qsize() < 30:
                 self.queues[client_data].put((dst_sock, response, auth_response))
 
             log.debug("Returning connection to pool.")
